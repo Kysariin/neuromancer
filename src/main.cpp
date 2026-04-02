@@ -21,16 +21,16 @@ const int NUM_MODES = 2;
 // bypassing the main loop entirely. IRAM_ATTR keeps them in fast RAM so they
 // don't cause a cache miss when the flash is busy.
 // safe GPIO pins on TTGO T-Display (avoids TFT pins 4,5,16,18,19,23 and boot pins 0,35)
-// pad 0 → GPIO 2  (T2)
+// pad 0 → GPIO 27 (T7)
 // pad 1 → GPIO 12 (T5)
 // pad 2 → GPIO 13 (T4)
 // pad 3 → GPIO 33 (T8)  ← was T6/GPIO14 which is a JTAG pin and unreliable for touch
-// pad 4 → GPIO 27 (T7)  ← MODE SWITCH
-void IRAM_ATTR gotTouch0() { touchDetected[0] = true; touchVal[0] = touchRead(T2); }
+// pad 4 → GPIO 2  (T2)  ← MODE SWITCH
+void IRAM_ATTR gotTouch0() { touchDetected[0] = true; touchVal[0] = touchRead(T7); }
 void IRAM_ATTR gotTouch1() { touchDetected[1] = true; touchVal[1] = touchRead(T5); }
 void IRAM_ATTR gotTouch2() { touchDetected[2] = true; touchVal[2] = touchRead(T4); }
 void IRAM_ATTR gotTouch3() { touchDetected[3] = true; touchVal[3] = touchRead(T8); }
-void IRAM_ATTR gotTouch4() { touchDetected[4] = true; touchVal[4] = touchRead(T7); }
+void IRAM_ATTR gotTouch4() { touchDetected[4] = true; touchVal[4] = touchRead(T2); }
 
 // prevent pad 4 (mode switch) from switching multiple times per tap
 unsigned long lastModeSwitch = 0;
@@ -118,11 +118,11 @@ void setup() {
   Serial.println("NEUROMANCER TOUCH INSTRUMENT");
 
   // hook up each touch pin to its ISR — fires whenever raw reading drops below THRESHOLD
-  touchAttachInterrupt(T2, gotTouch0, THRESHOLD);
+  touchAttachInterrupt(T7, gotTouch0, THRESHOLD);
   touchAttachInterrupt(T5, gotTouch1, THRESHOLD);
   touchAttachInterrupt(T4, gotTouch2, THRESHOLD);
   touchAttachInterrupt(T8, gotTouch3, THRESHOLD);
-  touchAttachInterrupt(T7, gotTouch4, THRESHOLD);
+  touchAttachInterrupt(T2, gotTouch4, THRESHOLD);
 
   tft.init();
   tft.setRotation(1);  // landscape mode (240×135)
