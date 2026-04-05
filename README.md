@@ -4,6 +4,8 @@ A capacitive touch instrument built on the ESP32 TTGO T-Display. Five copper-tap
 
 The name and aesthetic come from William Gibson's *Neuromancer*. Mode 0 is the matrix -- Gibson described cyberspace as a colorless void of cascading silver-white light, not green, so the visuals are silver data rain and spinning wireframe structures. Mode 1 is the ICE: neon geometric shapes that explode outward on every hit.
 
+[portfolio entry here](https://kysariin.github.io/project/systems/sprawl)
+
 ---
 
 ## Hardware
