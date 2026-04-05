@@ -4,43 +4,45 @@
 
 TFT_eSPI tft = TFT_eSPI();  // the display object — configured via build flags in platformio.ini
 
-// capacitive touch threshold — interrupt fires when the raw reading drops below this
+// capacitive touch threshold — reading drops below this when touched
 // higher value = more sensitive (fires on lighter touches), giving us more dynamic range
 const int THRESHOLD = 60;
 
-// these are set inside the ISRs (interrupt service routines) and read in the main loop
-// volatile tells the compiler "don't cache these — they can change at any time"
-volatile bool    touchDetected[5] = {false, false, false, false, false};
-volatile uint8_t touchVal[5]      = {0, 0, 0, 0, 0};
+// GPIO touch pins for each pad
+// pad 0 → GPIO 27 (T7)
+// pad 1 → GPIO 12 (T5)
+// pad 2 → GPIO 13 (T4)
+// pad 3 → GPIO 33 (T8)
+// pad 4 → GPIO 2  (T2)  ← MODE SWITCH
+const uint8_t PAD_PINS[5] = {T8, T5, T4, T7, T2};
 
 // which mode we're in: 0 = drone (sustained), 1 = rhythm (percussive hits)
 int currentMode = 0;
 const int NUM_MODES = 2;
 
-// ISR = interrupt service routine — these fire instantly when a pad is touched,
-// bypassing the main loop entirely. IRAM_ATTR keeps them in fast RAM so they
-// don't cause a cache miss when the flash is busy.
-// safe GPIO pins on TTGO T-Display (avoids TFT pins 4,5,16,18,19,23 and boot pins 0,35)
-// pad 0 → GPIO 27 (T7)
-// pad 1 → GPIO 12 (T5)
-// pad 2 → GPIO 13 (T4)
-// pad 3 → GPIO 33 (T8)  ← was T6/GPIO14 which is a JTAG pin and unreliable for touch
-// pad 4 → GPIO 2  (T2)  ← MODE SWITCH
-void IRAM_ATTR gotTouch0() { touchDetected[0] = true; touchVal[0] = touchRead(T7); }
-void IRAM_ATTR gotTouch1() { touchDetected[1] = true; touchVal[1] = touchRead(T5); }
-void IRAM_ATTR gotTouch2() { touchDetected[2] = true; touchVal[2] = touchRead(T4); }
-void IRAM_ATTR gotTouch3() { touchDetected[3] = true; touchVal[3] = touchRead(T8); }
-void IRAM_ATTR gotTouch4() { touchDetected[4] = true; touchVal[4] = touchRead(T2); }
+// --- attack envelope ---
+// how long (ms) it takes for a newly-touched pad to ramp from silence to full intensity.
+// raise this for a slower, more bowed/swelled attack; lower it for a snappier pluck.
+const unsigned long ATTACK_MS = 500;
 
-// prevent pad 4 (mode switch) from switching multiple times per tap
+// --- per-pad state ---
+bool          padActive[5]       = {false};  // is this pad currently being held?
+unsigned long padTouchStart[5]   = {0};      // millis() when the touch began
+float         padIntensity[5]    = {0.0f};   // touch depth locked in at first contact
+unsigned long lastSerialSend[5]  = {0};      // rate-limit serial output per pad
+
+// how often to push a serial update while a pad is held (~50 Hz)
+const unsigned long SERIAL_INTERVAL_MS = 20;
+
+// prevent mode-switch pad from toggling multiple times per tap
 unsigned long lastModeSwitch = 0;
 const unsigned long MODE_DEBOUNCE_MS = 600;
 
-// how long each pad's box stays lit up on the display after a touch
-unsigned long padActiveUntil[5] = {0, 0, 0, 0, 0};
+// how long each pad's box stays lit on the display after the last serial send
+unsigned long padActiveUntil[5] = {0};
 const unsigned long PAD_ACTIVE_MS = 200;
 
-// TFT color constants in RGB565 format (what the display uses)
+// TFT color constants in RGB565 format
 #define CLR_BG      TFT_BLACK
 #define CLR_GREEN   0x07E0
 #define CLR_MAGENTA 0xF81F
@@ -48,7 +50,7 @@ const unsigned long PAD_ACTIVE_MS = 200;
 #define CLR_DARK    0x2104  // dim gray for inactive pads
 
 // draws a single pad box on the TFT display
-// active = true → colored and shows the raw touch value
+// active = true → colored and shows the current output value
 // active = false → dark/dim idle state
 void drawPadBox(int i, uint8_t val, bool active) {
   int boxW = 36, boxH = 50;
@@ -66,7 +68,7 @@ void drawPadBox(int i, uint8_t val, bool active) {
   tft.print(i);  // show pad number
 
   if (active) {
-    // show the raw capacitive reading in the corner (useful for debugging sensitivity)
+    // show the enveloped output value (useful for seeing the ramp)
     tft.setTextSize(1);
     tft.setTextColor(CLR_BG);
     tft.setCursor(x + 2, y + boxH - 12);
@@ -79,7 +81,6 @@ void drawInterface() {
   tft.fillScreen(CLR_BG);
   tft.setTextSize(1);
 
-  // mode label at top left
   if (currentMode == 0) {
     tft.setTextColor(CLR_GREEN);
     tft.setCursor(4, 4);
@@ -90,80 +91,110 @@ void drawInterface() {
     tft.println("MODE 1: RHYTHM");
   }
 
-  // draw all 5 pad boxes in their idle/dark state
   for (int i = 0; i < 5; i++) drawPadBox(i, 0, false);
 
-  // label under the mode-switch pad (pad 4, rightmost)
   tft.setTextSize(1);
   tft.setTextColor(CLR_YELLOW);
   tft.setCursor(8 + 4 * (36 + 6) + 2, 24 + 50 + 4);
   tft.print("MODE");
 }
 
-// brief full-screen flash when switching modes — like a TV channel changing
-// uses millis() instead of delay() so touch ISRs aren't blocked during the flash
+// brief full-screen flash when switching modes
 void flashModeSwitch() {
   uint16_t col = (currentMode == 0) ? CLR_GREEN : CLR_MAGENTA;
   tft.fillScreen(col);
   unsigned long t = millis();
-  while (millis() - t < 60) {}   // hold flash for 60ms
+  while (millis() - t < 60) {}
   tft.fillScreen(CLR_BG);
   t = millis();
-  while (millis() - t < 30) {}   // brief black gap before redraw
+  while (millis() - t < 30) {}
 }
 
 void setup() {
-  Serial.begin(115200);  // must match the baudRate in the WebSerial connect call
-  delay(1000);           // give the serial monitor time to connect before printing
+  Serial.begin(115200);
+  delay(1000);
   Serial.println("NEUROMANCER TOUCH INSTRUMENT");
-
-  // hook up each touch pin to its ISR — fires whenever raw reading drops below THRESHOLD
-  touchAttachInterrupt(T7, gotTouch0, THRESHOLD);
-  touchAttachInterrupt(T5, gotTouch1, THRESHOLD);
-  touchAttachInterrupt(T4, gotTouch2, THRESHOLD);
-  touchAttachInterrupt(T8, gotTouch3, THRESHOLD);
-  touchAttachInterrupt(T2, gotTouch4, THRESHOLD);
 
   tft.init();
   tft.setRotation(1);  // landscape mode (240×135)
   drawInterface();
+
+  // no touch interrupts — we poll continuously so we can track hold duration
 }
 
 void loop() {
-  // check each pad's flag — set by ISR, cleared here once we've handled it
+  unsigned long now = millis();
+
   for (int i = 0; i < 5; i++) {
-    if (!touchDetected[i]) continue;
+    uint32_t raw     = touchRead(PAD_PINS[i]);
+    bool     touching = (raw < THRESHOLD);
 
-    touchDetected[i] = false;  // clear flag before processing so we don't miss the next touch
-    uint8_t val = touchVal[i];
-
-    // pad 4 is the mode switch — handled separately, doesn't send pad data
+    // --- pad 4: mode switch ---
     if (i == 4) {
-      unsigned long now = millis();
-      if (now - lastModeSwitch > MODE_DEBOUNCE_MS) {  // ignore rapid re-triggers
-        lastModeSwitch = now;
-        currentMode = (currentMode + 1) % NUM_MODES;
-        Serial.print("mode,");
-        Serial.println(currentMode);  // tells the browser to switch modes
-        flashModeSwitch();
-        drawInterface();
+      if (touching && !padActive[4]) {
+        padActive[4] = true;
+        if (now - lastModeSwitch > MODE_DEBOUNCE_MS) {
+          lastModeSwitch = now;
+          currentMode = (currentMode + 1) % NUM_MODES;
+          Serial.print("mode,");
+          Serial.println(currentMode);
+          flashModeSwitch();
+          drawInterface();
+        }
+      } else if (!touching) {
+        padActive[4] = false;
       }
-      continue;  // skip the pad data output below
+      continue;
     }
 
-    // send the pad event to the browser: "padIndex,rawValue\n"
-    // browser's parseLine() picks this up and routes it to the audio/visual engine
+    // --- pads 0-3: instrument pads with attack envelope ---
+
+    if (touching && !padActive[i]) {
+      // new touch — lock in intensity from the first reading and start the ramp
+      padActive[i]     = true;
+      padTouchStart[i] = now;
+      float initIntensity = (float)(THRESHOLD - (int)raw) / (float)THRESHOLD;
+      if (initIntensity < 0.0f) initIntensity = 0.0f;
+      if (initIntensity > 1.0f) initIntensity = 1.0f;
+      padIntensity[i] = initIntensity;
+    } else if (!touching && padActive[i]) {
+      // released — reset so next touch starts fresh from zero
+      padActive[i] = false;
+    }
+
+    if (!padActive[i]) continue;
+
+    // rate-limit how often we push serial updates (~50 Hz)
+    if (now - lastSerialSend[i] < SERIAL_INTERVAL_MS) continue;
+    lastSerialSend[i] = now;
+
+    // --- compute the enveloped output value ---
+
+    // attack ramp: 0.0 → 1.0 over ATTACK_MS milliseconds
+    float elapsed = (float)(now - padTouchStart[i]);
+    float ramp    = elapsed / (float)ATTACK_MS;
+    if (ramp > 1.0f) ramp = 1.0f;
+
+    // quadratic ease-in: slow start, accelerates into full intensity
+    // change to ramp = ramp for linear, or ramp * ramp * ramp for cubic (slower start)
+    ramp = ramp * ramp;
+
+    // use the intensity locked in at first contact — not the live reading,
+    // because the ESP32 touch sensor recalibrates during sustained holds and
+    // the raw value drifts back toward the threshold, which would kill the level.
+    uint8_t outVal = (uint8_t)(ramp * padIntensity[i] * 127.0f);
+
     Serial.print(i);
     Serial.print(",");
-    Serial.println(val);
+    Serial.println(outVal);
 
-    padActiveUntil[i] = millis() + PAD_ACTIVE_MS;  // keep box lit for 200ms
-    drawPadBox(i, val, true);
+    padActiveUntil[i] = now + PAD_ACTIVE_MS;
+    drawPadBox(i, outVal, true);
   }
 
-  // check if any active pad's display timer has expired and dim it back down
-  unsigned long now = millis();
-  for (int i = 0; i < 4; i++) {  // only pads 0-3 (pad 4 = mode switch, never lights up)
+  // dim any pad boxes whose display timer has expired
+  now = millis();
+  for (int i = 0; i < 4; i++) {
     if (padActiveUntil[i] && now >= padActiveUntil[i]) {
       padActiveUntil[i] = 0;
       drawPadBox(i, 0, false);

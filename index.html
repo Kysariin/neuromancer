@@ -1,0 +1,1134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>NEUROMANCER // TOUCH INSTRUMENT</title>
+<style>
+  /* importing font */
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=VT323&display=swap');
+
+  :root {
+    --green:   #c8dcf8;   /* mode 0 = silvery (books describe matrix as colorless) */
+    --dkgreen: #1a2a3a;
+    --cyan:    #00ffe7;
+    --magenta: #ff00c8;
+    --purple:  #9900ff;
+    --red:     #ff2222;
+    --yellow:  #ffe600;
+    --bg:      #000000;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--green);
+    font-family: 'Share Tech Mono', monospace;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+    cursor: crosshair;
+    user-select: none;
+  }
+
+  /* scanlines */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(0deg,
+      transparent, transparent 2px,
+      rgba(0,0,0,0.15) 2px, rgba(0,0,0,0.15) 4px
+    );
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  /* CRT vignette */
+  body::after {
+    content: '';
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.75) 100%);
+    pointer-events: none;
+    z-index: 999;
+  }
+
+  #canvas-bg {
+    position: fixed; inset: 0; z-index: 0;
+  }
+
+  /* ── UI OVERLAY ── */
+  #ui {
+    position: fixed; inset: 0; z-index: 10;
+    display: flex; flex-direction: column;
+    padding: 16px 20px 16px;
+    pointer-events: none;
+  }
+
+  #header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+
+  h1 {
+    font-family: 'VT323', monospace;
+    font-size: clamp(1.8rem, 4vw, 2.8rem);
+    letter-spacing: 0.1em;
+    line-height: 1;
+    text-shadow: 0 0 18px var(--green), 0 0 50px var(--green);
+  }
+
+  .sub {
+    font-size: 0.6rem;
+    color: #3a5070;
+    letter-spacing: 0.3em;
+    margin-top: 3px;
+  }
+
+  #mode-badge {
+    font-family: 'VT323', monospace;
+    font-size: clamp(1.1rem, 2.5vw, 1.6rem);
+    padding: 3px 14px;
+    border: 1px solid currentColor;
+    letter-spacing: 0.12em;
+    transition: color 0.15s, border-color 0.15s, text-shadow 0.15s;
+  }
+  #mode-badge.m0 { color: var(--green);   text-shadow: 0 0 10px var(--green); }
+  #mode-badge.m1 { color: var(--magenta); text-shadow: 0 0 10px var(--magenta); }
+
+  /* ── PAD STRIP ── */
+  #pads {
+    display: flex;
+    gap: 8px;
+    margin-top: auto;
+    margin-bottom: 10px;
+  }
+
+  .pad {
+    flex: 1;
+    height: 72px;
+    border: 1px solid #1a2a3a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: 'VT323', monospace;
+    font-size: 1.9rem;
+    color: #1e3050;
+    position: relative;
+    transition: border-color 0.05s;
+    overflow: hidden;
+  }
+
+  /* activity bar at bottom of pad — height driven by JS */
+  .pad-bar {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 0%;
+    transition: height 0.08s, background 0.08s;
+  }
+
+  .pad .pad-num {
+    position: relative; z-index: 1;
+    line-height: 1;
+  }
+  .pad .pad-sub {
+    position: relative; z-index: 1;
+    font-size: 0.5rem;
+    font-family: 'Share Tech Mono', monospace;
+    letter-spacing: 0.18em;
+    opacity: 0.45;
+    margin-top: 1px;
+  }
+  .pad .pad-val {
+    position: relative; z-index: 1;
+    font-size: 0.55rem;
+    font-family: 'Share Tech Mono', monospace;
+    color: #44ff66;
+    min-height: 10px;
+    letter-spacing: 0.1em;
+  }
+
+  .pad.active-m0 { border-color: var(--green); color: var(--green); }
+  .pad.active-m0 .pad-bar { background: rgba(200,220,248,0.18); height: var(--bar-h); }
+
+  .pad.active-m1 { border-color: var(--magenta); color: var(--magenta); }
+  .pad.active-m1 .pad-bar { background: rgba(255,0,200,0.18); height: var(--bar-h); }
+
+  /* mode pad marker */
+  .pad:last-child::after {
+    content: 'MODE';
+    position: absolute; top: 3px; right: 4px;
+    font-size: 0.42rem;
+    font-family: 'Share Tech Mono', monospace;
+    color: var(--yellow);
+    letter-spacing: 0.12em;
+    opacity: 0.6;
+  }
+
+  /* ── STATUS BAR ── */
+  #statusbar {
+    display: flex;
+    gap: 16px;
+    font-size: 0.58rem;
+    color: #2a5a35;
+    letter-spacing: 0.14em;
+    flex-wrap: wrap;
+  }
+  .ok   { color: var(--green) !important; }
+  .warn { color: var(--yellow) !important; }
+  .err  { color: var(--red) !important; }
+
+  /* ── CONNECT BUTTON ── */
+  #connect-btn {
+    pointer-events: all;
+    position: fixed;
+    bottom: 20px; right: 20px;
+    z-index: 20;
+    background: transparent;
+    border: 1px solid var(--green);
+    color: var(--green);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.2em;
+    padding: 8px 18px;
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+  }
+  #connect-btn:hover {
+    background: var(--green); color: #000;
+    box-shadow: 0 0 18px var(--green);
+  }
+  #connect-btn.on { border-color: var(--cyan); color: var(--cyan); }
+  #connect-btn.on:hover {
+    background: var(--cyan); color: #000;
+    box-shadow: 0 0 18px var(--cyan);
+  }
+
+  /* ── NO SERIAL WARNING ── */
+  #no-serial {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.88);
+    z-index: 500;
+    align-items: center; justify-content: center; flex-direction: column;
+    gap: 10px;
+    font-family: 'VT323', monospace;
+    font-size: 1.8rem;
+    color: var(--red);
+    text-align: center;
+    padding: 40px;
+  }
+  #no-serial.show { display: flex; }
+  #no-serial small {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.68rem;
+    color: #666;
+  }
+
+  /* ── KEYBOARD HINT ── */
+  #kb-hint {
+    position: fixed; bottom: 60px; right: 20px;
+    font-size: 0.5rem; color: #2a4a2a;
+    letter-spacing: 0.15em; z-index: 20;
+    text-align: right; line-height: 1.6;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="canvas-bg"></canvas>
+
+<div id="ui">
+  <div id="header">
+    <div>
+      <h1>NEUROMANCER</h1>
+      <div class="sub">// TACTILE INTERFACE //</div>
+    </div>
+    <div id="mode-badge" class="m0">MODE 0 · DRONE</div>
+  </div>
+
+  <div id="pads">
+    <div class="pad" id="pad0"><div class="pad-bar"></div><span class="pad-num">0</span><span class="pad-sub">PAD 0</span><span class="pad-val" id="pv0"></span></div>
+    <div class="pad" id="pad1"><div class="pad-bar"></div><span class="pad-num">1</span><span class="pad-sub">PAD 1</span><span class="pad-val" id="pv1"></span></div>
+    <div class="pad" id="pad2"><div class="pad-bar"></div><span class="pad-num">2</span><span class="pad-sub">PAD 2</span><span class="pad-val" id="pv2"></span></div>
+    <div class="pad" id="pad3"><div class="pad-bar"></div><span class="pad-num">3</span><span class="pad-sub">PAD 3</span><span class="pad-val" id="pv3"></span></div>
+    <div class="pad" id="pad4"><div class="pad-bar"></div><span class="pad-num">4</span><span class="pad-sub">PAD 4</span><span class="pad-val" id="pv4"></span></div>
+  </div>
+
+  <div id="statusbar">
+    <span id="s-serial">SERIAL: <span class="warn">DISCONNECTED</span></span>
+    <span id="s-mode">MODE: 0</span>
+    <span id="s-last">LAST: --</span>
+    <span id="s-audio">AUDIO: <span class="warn">CLICK TO INIT</span></span>
+  </div>
+</div>
+
+<button id="connect-btn">[ CONNECT DEVICE ]</button>
+
+<div id="no-serial">
+  <div>WebSerial Not Supported</div>
+  <small>Use Chrome or Edge on desktop.<br>Firefox and Safari do not support WebSerial.</small>
+</div>
+
+<div id="kb-hint">
+  KEYS: A S D F G = pads 0-4<br>
+  M = switch mode
+</div>
+
+<script>
+// ==========
+//  STATE
+// ==========
+// single global state object — everything reads from here
+const S = {
+  mode: 0,                              // 0 = drone, 1 = rhythm
+  padActive: [false,false,false,false,false], // is each pad currently being held?
+  padVal:    [0,0,0,0,0],               // raw capacitive reading from ESP32 (lower = harder press)
+  padNorm:   [0,0,0,0,0],              // cleaned-up 0–1 value the audio/visuals actually use
+  modeFlash: 0,                         // countdown for the full-screen flash when switching modes
+};
+
+// firmware now sends 0-127 where higher = more intensity (envelope + pressure already applied)
+// no curve needed here — the quadratic ease-in is handled on the firmware side
+function normalize(raw) {
+  return Math.max(0, Math.min(1, raw / 127));
+}
+
+// =============================
+//  CANVAS / VISUAL ENGINE
+// =============================
+const canvas = document.getElementById('canvas-bg');
+const ctx    = canvas.getContext('2d');
+
+function resize() { canvas.width = innerWidth; canvas.height = innerHeight; }
+window.addEventListener('resize', resize);
+resize();
+
+// the "matrix rain" — one stream per column across the screen
+// Gibson described cyberspace as colorless, with the data being cascading waterfalls of light,
+// and The Matrix turned that into the green text rain
+// so we make the raining text "colorless" (silver)
+let streams = [];
+function initStreams() {
+  streams = [];
+  const cols = Math.floor(canvas.width / 16); // how many columns fit
+  for (let i = 0; i < cols; i++) {
+    streams.push({
+      x: i * 16 + 8,                          // evenly spaced across screen
+      y: Math.random() * canvas.height,        // start at random heights so they're not synced
+      speed: 0.6 + Math.random() * 2.2,        // each column falls at a different speed
+      len: 10 + Math.floor(Math.random() * 18),// trail length (how long the tail is)
+      chars: Array.from({length:30}, randChar),// the actual characters in the stream
+      bright: 0.4 + Math.random() * 0.6,       // some streams are dimmer than others
+    });
+  }
+}
+
+// mix of binary, katakana, symbols, and hex
+// katakana specifically because Neuromancer's Sprawl is basically a dystopian Tokyo
+    // the katakana is random, it doesn't actually mean anything in this context
+function randChar() {
+  const pools = ['01','アイウエオカキクケコサシスセソ','!@#$%^&*<>{}','ABCDEF0123456789'];
+  const p = pools[Math.floor(Math.random() * pools.length)];
+  return p[Math.floor(Math.random() * p.length)];
+}
+
+// ------ Shared visual palette ------
+// mode 1 (Sprawl/Ninsei): neon — cyan, magenta, yellow, red, violet
+const PAD_COLS  = ['#00ffe7','#ff00c8','#ffe600','#ff2222','#9900ff'];
+const PAD_RGB   = [[0,255,231],[255,0,200],[255,230,0],[255,34,34],[153,0,255]];
+// mode 0 (matrix): Gibson's cyberspace = silver-white light, not green
+// "a colorless void ... transparent 3D chessboard" — silver on black void"
+const MATRIX_COLS = ['#d2e4ff','#c8dcf8','#e4eeff','#b8d0f0','#ddeaff'];
+const MATRIX_RGB  = [[210,228,255],[200,220,248],[228,238,255],[184,208,240],[221,234,255]];
+// mode 1 ripple palette: neon + "dawn geodesics warmth" (rose and amber from the Sprawl passages)
+const RIPPLE_COLS = ['#00ffe7','#ff00c8','#ffe600','#ff3333','#00ff41','#9900ff','#c4726a','#d4a058'];
+// polygon sides per pad: triangle, diamond, hexagon, triangle, square
+const PAD_SIDES = [3, 4, 6, 3, 4];
+
+// generic polygon drawer — give it a center, radius, number of sides, and rotation angle
+// sides=0 means just draw a circle instead. used everywhere for the ICE-like geometric shapes
+    // "wall structures of glowing strata" / "windows, gaps, but also traps" / "an ICE has a pattern. 
+    // one can study it as a 2d graphic representation on a monitor, in which case it looks like woven lines
+    // of neon. thanks to an animation program, weaving lines show the internal functions"
+function drawPoly(cx, cy, r, sides, rot) {
+  if (sides === 0) { ctx.arc(cx, cy, r, 0, Math.PI*2); return; }
+  for (let k = 0; k <= sides; k++) {
+    const a = (k / sides) * Math.PI * 2 + rot; // evenly space points around a circle
+    k === 0 ? ctx.moveTo(cx + Math.cos(a)*r, cy + Math.sin(a)*r)
+            : ctx.lineTo(cx + Math.cos(a)*r, cy + Math.sin(a)*r);
+  }
+}
+
+// ── ripples + angular shards (mode 1) ────────
+const ripples = [];
+const shards  = [];
+
+function spawnRipple(padIdx, strength) {
+  // each hit spawns a polygon that expands outward from a random screen location
+  // random position so the whole screen fills up over time, not just fixed spots
+  const x = canvas.width  * (0.08 + Math.random() * 0.84);
+  const y = canvas.height * (0.08 + Math.random() * 0.84);
+  const col   = RIPPLE_COLS[Math.floor(Math.random() * RIPPLE_COLS.length)]; // random color, includes dawn geodesics rose/amber
+  const sides = [3,4,4,6,0,3,6][Math.floor(Math.random() * 7)];       // random shape each time
+  ripples.push({
+    x, y, r: 0,
+    maxR: 50 + strength * 220,          // harder press = bigger ripple
+    col, sides,
+    rot: Math.random() * Math.PI * 2,   // random starting rotation
+    rotSpeed: (Math.random() - 0.5)
+              * 3,                       // some spin clockwise, some counter
+    alpha: 1,
+    speed: 2.5 + strength * 5,          // harder press = faster expansion
+  });
+  // shards fly outward from the same impact point — like ICE shattering
+  const count = 5 + Math.floor(strength * 8);
+  for (let k = 0; k < count; k++) {
+    const a   = Math.random() * Math.PI * 2; // random direction
+    const spd = 1.5 + strength * 8 + Math.random() * 3;
+    shards.push({ x, y, vx: Math.cos(a)*spd, vy: Math.sin(a)*spd,
+                  col, alpha: 0.9, w: 1 + strength * 1.5 });
+  }
+}
+
+// glitch state
+let glitchTimer = 0;
+// per-pad rotation angles for mode 0 geometry
+const geoAngles = [0, 0, 0, 0, 0];
+
+// --- MODE 0: DATA RAIN + GEOMETRY ---
+// "jacked in" mode -- data streaming past
+function drawMode0(dt) {
+  const W = canvas.width, H = canvas.height;
+  const anyActive = S.padActive.some(Boolean);
+  const activity  = S.padNorm.reduce((a,b)=>a+b,0) / 5; // average intensity across all pads
+  const t = Date.now() / 1000;
+
+  // "breathing" -- the fade rate oscillates rapidly, making the whole image pulse
+  // faster + stronger the harder you play
+  const breath    = Math.sin(t * (2 + activity * 8) * Math.PI * 2);
+  const fadeAlpha = 0.11 + activity * 0.05 + Math.abs(breath) * 0.13 * activity;
+  ctx.fillStyle = `rgba(0,0,0,${fadeAlpha})`;
+  ctx.fillRect(0, 0, W, H); // semi-transparent black overlay = trails on moving objects
+
+  // data rain -- tints to the color of whatever pad is active first
+  // silver data rain -- Gibson's matrix is NOT green (that was the Wachowskis).
+  // it's a "phosphene smear" of cold silver-white light in a colorless void.
+  const tintIdx = S.padActive.findIndex(Boolean);
+  const tint    = tintIdx >= 0 ? MATRIX_RGB[tintIdx] : [210, 228, 255]; // silver-white default
+  ctx.font = '13px "Share Tech Mono"';
+  for (const s of streams) {
+    s.y += s.speed * (1 + activity * 3); // rain falls faster when you're playing harder
+    if (s.y > H + s.len * 16) s.y = -s.len * 16; // wrap around top when it hits the bottom
+    if (Math.random() < 0.04 + activity * 0.08)   // more activity = characters mutate faster
+      s.chars[Math.floor(Math.random() * s.chars.length)] = randChar();
+    for (let j = 0; j < s.len; j++) {
+      const cy = s.y - j * 15;
+      if (cy < -16 || cy > H + 16) continue; // skip if off screen
+      const a = (1 - j / s.len) * s.bright;  // fade out toward the tail
+      ctx.fillStyle = j === 0
+        ? `rgba(245,250,255,${a})`            // pure white phosphene head
+        : `rgba(${tint[0]*a|0},${tint[1]*a|0},${tint[2]*a|0},${a})`; // silver trail
+      ctx.fillText(s.chars[j % s.chars.length], s.x, cy);
+    }
+  }
+
+  // phosphene sparkle — "a smear of phosphenes" as Case jacks in.
+  // random silver-white dots that flare briefly against the void.
+  if (anyActive) {
+    const sparks = Math.floor(activity * 18);
+    for (let k = 0; k < sparks; k++) {
+      const sx = Math.random() * W, sy = Math.random() * H;
+      const sa = 0.2 + Math.random() * 0.5 * activity;
+      ctx.fillStyle = `rgba(220,235,255,${sa})`;
+      ctx.fillRect(sx, sy, 1.5, 1.5);
+    }
+  }
+
+  // horizontal scan beams -- one per active pad, each a different color
+  // like radar sweeps reading your position in the data
+  for (let i = 0; i < 5; i++) {
+    if (!S.padActive[i]) continue;
+    const str  = S.padNorm[i];
+    const rgb  = MATRIX_RGB[i]; // silver scan beams, not colored
+    const yPos = H * 0.15 + i * H * 0.15 + breath * 5 * str; // breathes vertically
+    const grad = ctx.createLinearGradient(0, 0, W, 0);
+    grad.addColorStop(0,   'transparent');
+    grad.addColorStop(0.3, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${0.25+str*0.4})`);
+    grad.addColorStop(0.5, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${0.5+str*0.5})`); // bright center
+    grad.addColorStop(0.7, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${0.25+str*0.4})`);
+    grad.addColorStop(1,   'transparent');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, yPos - 1, W, 2 + str * 3);
+  }
+
+  // each pad has its own shape:
+  // triangle, diamond, hexagon, triangle, square -- spinning faster the harder you press
+  const GEO_XY = [[0.15,0.38],[0.3,0.62],[0.5,0.32],[0.7,0.66],[0.85,0.44]];
+  for (let i = 0; i < 5; i++) {
+    if (!S.padActive[i]) continue;
+    geoAngles[i] += dt * (0.8 + i * 0.35 + S.padNorm[i] * 4); // spin speed scales with pressure
+    const str   = S.padNorm[i];
+    const rgb   = MATRIX_RGB[i]; // silver-white ICE wireframes -- "transparent 3D chessboard"
+    const sides = PAD_SIDES[i];
+    const cx    = W * GEO_XY[i][0];
+    const cy    = H * GEO_XY[i][1];
+    const maxR  = 35 + str * 110;              // bigger the harder you press
+    const rings = 2 + Math.floor(str * 3);     // more rings = more pressure
+
+    for (let r = 0; r < rings; r++) {
+      const radius = maxR * ((r + 1) / rings);
+      const rot    = geoAngles[i] + r * (Math.PI / sides); // offset each ring slightly
+      ctx.beginPath();
+      for (let k = 0; k <= sides; k++) {
+        const a   = (k / sides) * Math.PI * 2 + rot;
+        const jag = 1 + Math.sin(a * sides * 2 + t * 4) * 0.18 * str; // wobbly distortion on edges
+        ctx.lineTo(cx + Math.cos(a) * radius * jag, cy + Math.sin(a) * radius * jag);
+      }
+      ctx.closePath();
+      ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${0.25 + str * 0.55})`;
+      ctx.lineWidth = 0.5 + str * 1.5;
+      ctx.stroke();
+    }
+    // spikes shooting out from center -- more intense with harder press
+    const spk = sides * 2;
+    for (let k = 0; k < spk; k++) {
+      const a   = (k / spk) * Math.PI * 2 + geoAngles[i] * 0.6;
+      const len = (15 + str * 55) * (0.4 + 0.6 * Math.abs(Math.sin(t * 5 + k))); // animated length
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.cos(a) * len, cy + Math.sin(a) * len);
+      ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${0.12 + str * 0.28})`;
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+    }
+  }
+
+  // background grid -- shears sideways when you're playing, like space warping
+  const shear = anyActive ? Math.sin(t * 9) * activity * 5 : 0;
+  // background grid -- silver-blue, like the "transparent 3D chessboard" extending to infinity
+  ctx.strokeStyle = `rgba(120,160,220,${0.07 + activity * 0.08})`;
+  ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 48) {
+    ctx.beginPath(); ctx.moveTo(x + shear, 0); ctx.lineTo(x - shear, H); ctx.stroke();
+  }
+  for (let y = 0; y < H; y += 48) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y + shear * 0.5); ctx.stroke();
+  }
+
+  // glitch effects -- horizontal tears + chromatic aberration (RGB channel splitting)
+  // represents signal corruption / pushing against ICE. more activity = more glitch
+  glitchTimer -= dt;
+  if (glitchTimer <= 0) {
+    glitchTimer = 0.06 + Math.random() * (anyActive ? 0.14 : 0.5); // glitch more often when active
+    if (Math.random() < (anyActive ? 0.75 : 0.2)) {
+      const n = anyActive ? 4 + Math.floor(activity * 6) : 1;
+      for (let b = 0; b < n; b++) {
+        // grab a horizontal slice of the canvas and redraw it shifted sideways
+        const gx  = Math.random() * W, gy = Math.random() * H;
+        const gw  = 60 + Math.random() * 200, gh = 2 + Math.random() * 12;
+        const off = (Math.random() - 0.5) * 44 * (1 + activity * 2);
+        ctx.drawImage(canvas, gx, gy, gw, gh, gx + off, gy, gw, gh);
+      }
+      if (activity > 0.15) {
+        // chromatic aberration: draw the canvas twice, shifted left and right
+        // 'screen' blend mode makes it look like the RGB channels are splitting apart
+        const ab = activity * 7;
+        ctx.globalCompositeOperation = 'screen';
+        ctx.globalAlpha = 0.07;
+        ctx.drawImage(canvas, -ab, 0);
+        ctx.drawImage(canvas,  ab, 0);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+      }
+    }
+  }
+}
+
+// --- MODE 1: RHYTHM + GEOMETRY ---
+// "running the matrix" -- active hacking mode. staccato hits, exploding geometry,
+// each touch is an event rather than sustained (in audio mode)
+// fixed anchor points where each pad's sustained ring lives
+const PAD_ANCHORS = [[0.18,0.42],[0.34,0.64],[0.5,0.3],[0.66,0.58],[0.82,0.44]];
+
+function drawMode1(dt) {
+  const W = canvas.width, H = canvas.height;
+  const activity = S.padNorm.reduce((a,b)=>a+b,0) / 5;
+  const t = Date.now() / 1000;
+
+  // same breathing concept as mode 0, slightly different rate
+  const breath    = Math.sin(t * (3 + activity * 7) * Math.PI * 2);
+  const fadeAlpha = 0.13 + activity * 0.05 + Math.abs(breath) * 0.11 * activity;
+  ctx.fillStyle = `rgba(0,0,0,${fadeAlpha})`;
+  ctx.fillRect(0, 0, W, H);
+
+  // each pad has a persistent rotating polygon that stays on screen while held
+  // shape is unique per pad: triangle, diamond, hexagon, triangle, square
+  for (let i = 0; i < 5; i++) {
+    if (!S.padActive[i]) continue;
+    const str   = S.padNorm[i];
+    const col   = PAD_COLS[i];
+    const rgb   = PAD_RGB[i];
+    const sides = PAD_SIDES[i];
+    const cx    = W * PAD_ANCHORS[i][0];
+    const cy    = H * PAD_ANCHORS[i][1];
+    const baseR = 40 + i * 30;
+    const pulse = Math.sin(t * (2 + i) * (1 + activity)) * 16 * str; // radius pulses with activity
+    const r     = (baseR + pulse) * (1 + breath * 0.07 * str);        // + breathing scale
+    const rot   = t * (0.25 + i * 0.18);                              // slow continuous rotation
+
+    // outer ring
+    ctx.beginPath();
+    drawPoly(cx, cy, r, sides, rot);
+    ctx.strokeStyle = col + 'cc';
+    ctx.lineWidth = 1.5 + str * 2.5; // thicker with harder press
+    ctx.stroke();
+
+    // inner ring spins the opposite direction -- creates a hypnotic counter-rotation
+    ctx.beginPath();
+    drawPoly(cx, cy, r * 0.48, sides, -rot * 1.4);
+    ctx.strokeStyle = col + '77';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // radial glow around the shape
+    const grd = ctx.createRadialGradient(cx, cy, r * 0.6, cx, cy, r + 55);
+    grd.addColorStop(0, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.25)`);
+    grd.addColorStop(1, 'transparent');
+    ctx.fillStyle = grd;
+    ctx.beginPath(); ctx.arc(cx, cy, r + 55, 0, Math.PI*2); ctx.fill();
+
+    // animated spikes -- length oscillates so they "breathe" independently
+    const spk = sides * 2;
+    for (let k = 0; k < spk; k++) {
+      const a   = (k / spk) * Math.PI * 2 + rot;
+      const len = r * (0.7 + 0.6 * str * Math.abs(Math.sin(t * 6 + k)));
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.cos(a) * len, cy + Math.sin(a) * len);
+      ctx.strokeStyle = col + '55';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+    }
+  }
+
+  // ripple polygons -- each hit spawns one at a random location, expands and fades
+  // represents the shockwave of code executing, ICE shattering
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    const rp = ripples[i];
+    rp.r    += rp.speed + (rp.maxR - rp.r) * 0.03; // ease toward max radius
+    rp.rot  += rp.rotSpeed * dt;                     // spin as it expands
+    rp.alpha -= 0.01;                                // fade out over time
+    if (rp.alpha <= 0 || rp.r >= rp.maxR) { ripples.splice(i, 1); continue; }
+    const hex = Math.floor(rp.alpha * 255).toString(16).padStart(2, '0'); // alpha as hex for color string
+    ctx.beginPath();
+    drawPoly(rp.x, rp.y, rp.r, rp.sides, rp.rot);
+    ctx.strokeStyle = rp.col + hex;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  // shards -- line segments flying outward from each hit, decelerating and fading
+  // supposed to be motion-blurry
+  for (let i = shards.length - 1; i >= 0; i--) {
+    const s = shards[i];
+    s.x += s.vx; s.y += s.vy;
+    s.vx *= 0.94; s.vy *= 0.94; // friction / deceleration
+    s.alpha -= 0.025;
+    if (s.alpha <= 0) { shards.splice(i, 1); continue; }
+    const hex = Math.floor(s.alpha * 255).toString(16).padStart(2, '0');
+    ctx.beginPath();
+    ctx.moveTo(s.x, s.y);
+    ctx.lineTo(s.x - s.vx * 4, s.y - s.vy * 4); // tail points back toward origin
+    ctx.strokeStyle = s.col + hex;
+    ctx.lineWidth = s.w;
+    ctx.stroke();
+  }
+
+  // oscilloscope at the bottom -- shows the summed waveform of all active pads
+  // uses a blend of square + sine so it looks angular and harsh, not smooth
+  const wY = H * 0.84;
+  ctx.beginPath();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = activity > 0.05 ? '#ff00c8cc' : '#330022aa';
+  for (let x = 0; x <= W; x += 2) {
+    const tv = t + x / 80; // scroll horizontally over time
+    let y = 0;
+    for (let i = 0; i < 5; i++) {
+      if (S.padNorm[i] > 0.05) {
+        const sine = Math.sin(tv * [1.0,1.5,2.0,2.7,3.5][i] * 3.14);
+        y += (sine * 0.35 + (sine > 0 ? 1 : -1) * 0.65) * 22 * S.padNorm[i]; // angular blend
+      }
+    }
+    x === 0 ? ctx.moveTo(x, wY + y) : ctx.lineTo(x, wY + y);
+  }
+  ctx.stroke();
+
+  // scrolling hex data at the top -- purely decorative
+  ctx.font = '11px "Share Tech Mono"';
+  ctx.fillStyle = `rgba(255,0,200,${0.04 + activity * 0.07})`; // brighter when more active
+  for (let row = 0; row < 5; row++) {
+    let line = '';
+    for (let c = 0; c < 20; c++)
+      line += Math.floor(Math.random()*256).toString(16).padStart(2,'0').toUpperCase() + ' ';
+    ctx.fillText(line, 10, 18 + row * 13);
+  }
+
+  // glitch: same horizontal tearing + chromatic split as mode 0
+  glitchTimer -= dt;
+  if (glitchTimer <= 0) {
+    glitchTimer = 0.04 + Math.random() * 0.28;
+    if (activity > 0.07 && Math.random() < 0.65) {
+      const n = 2 + Math.floor(activity * 5);
+      for (let b = 0; b < n; b++) {
+        const gy  = Math.random() * H, gh = 3 + Math.random() * 14;
+        const off = (Math.random() - 0.5) * 65 * activity;
+        ctx.drawImage(canvas, 0, gy, W, gh, off, gy, W, gh);
+      }
+      if (activity > 0.12) {
+        const ab = activity * 9;
+        ctx.globalCompositeOperation = 'screen';
+        ctx.globalAlpha = 0.06;
+        ctx.drawImage(canvas, -ab, 0);
+        ctx.drawImage(canvas,  ab, 0);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+      }
+    }
+  }
+}
+
+// --- MODE FLASH ---
+function drawModeFlash() {
+  if (S.modeFlash <= 0) return;
+  ctx.fillStyle = S.mode===0
+    ? `rgba(210,230,255,${S.modeFlash * 0.35})`  // silver-white flash entering the void
+    : `rgba(255,0,200,${S.modeFlash * 0.35})`;   // magenta flash for the Sprawl
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  S.modeFlash -= 0.07;
+}
+
+let lastT = performance.now();
+function render(now) {
+  const dt = (now - lastT) / 1000;
+  lastT = now;
+  if (S.mode === 0) drawMode0(dt);
+  else              drawMode1(dt);
+  drawModeFlash();
+  requestAnimationFrame(render);
+}
+initStreams();
+requestAnimationFrame(render);
+
+// ============
+//  WEB AUDIO
+// ============
+let actx = null;
+const droneNodes   = {};
+const sustainNodes = {};
+const padHoldStart = [0,0,0,0,0];
+
+// A minor pentatonic scale -- A1, E2, A2, D3, E3
+// AI said pentatonic would be best to make most combos of notes sound good
+const DRONE_FREQS = [55, 82.41, 110, 146.83, 164.81];
+// each pad has a different oscillator waveform for tonal variety
+// sawtooth = buzzy/bright, square = hollow/reedy, triangle = mellow/sine-like
+const OSC_TYPES   = ['sawtooth','square','sawtooth','triangle','square'];
+
+function initAudio() {
+  if (actx) return;
+  // browsers block audio until a user gesture -- this fires on the Connect button click
+  actx = new AudioContext();
+  setAudioStatus('ACTIVE', 'ok');
+}
+
+function startDrone(i, strength, holdMs = 0, activeCount = 1) {
+  if (!actx) return;
+  // bloom: how long the pad has been held, 0→1 over 2.5 seconds
+  // used to slowly open the filter cutoff -- the longer you hold, the brighter it gets
+  const bloom      = Math.min(holdMs / 2500, 1);
+  const filterFreq = 400 + i * 200 + strength * 900 + bloom * 1800;
+  // when multiple pads are active, spread them slightly apart in pitch
+  // -14 to +14 depending on pad index -- creates a chorus/ensemble feel
+  const ensemble   = activeCount > 1 ? (i * 7 - 14) : 0;
+  // pitch glide: pressing harder bends the note up ~1.2 semitones (120 cents)
+  // subtle enough to stay in tune
+  const pitchBend  = strength * 120 + ensemble;
+  const g5target   = strength * 0.06;                    // 5th harmony level
+  const g8target   = Math.max(0, strength - 0.4) * 0.1; // octave only appears above 40% strength
+
+  if (droneNodes[i]) {
+    // pad is already playing -- just update parameters
+    const d = droneNodes[i];
+    d.osc.detune.setTargetAtTime(pitchBend, actx.currentTime, 0.05);
+    d.osc5.detune.setTargetAtTime(pitchBend, actx.currentTime, 0.05);
+    d.osc8.detune.setTargetAtTime(pitchBend, actx.currentTime, 0.05);
+    d.masterGain.gain.setTargetAtTime(0.07 + strength * 0.13, actx.currentTime, 0.05);
+    d.filter.frequency.setTargetAtTime(filterFreq, actx.currentTime, 0.2);
+    d.lfo.frequency.setTargetAtTime(0.5 + i * 0.3 + bloom * 1.5, actx.currentTime, 0.5);
+    d.gain5.gain.setTargetAtTime(g5target, actx.currentTime, 0.12);
+    d.gain8.gain.setTargetAtTime(g8target, actx.currentTime, 0.18);
+    return;
+  }
+
+  // all three oscillators share this filter + master gain
+  // so the bloom sweep and LFO tremolo affect the whole chord at once
+  const filter     = actx.createBiquadFilter();
+  const masterGain = actx.createGain();
+  const lfo        = actx.createOscillator();
+  const lfoGain    = actx.createGain();
+
+  filter.type = 'lowpass';          // cuts highs -- opening it up = more bright/intense
+  filter.frequency.value = filterFreq;
+  filter.Q.value = 5;               // resonant peak at cutoff = slightly "singing" quality
+
+  // LFO wobbles the filter cutoff for a subtle tremolo effect
+  lfo.frequency.value = 0.5 + i * 0.3; // each pad has a slightly different wobble rate
+  lfoGain.gain.value  = 8 + bloom * 20; // wobble amount grows with hold time
+  lfo.connect(lfoGain);
+  lfoGain.connect(filter.frequency);
+  lfo.start();
+
+  masterGain.gain.setValueAtTime(0, actx.currentTime);
+  masterGain.gain.linearRampToValueAtTime(0.07 + strength * 0.13, actx.currentTime + 0.06);
+  filter.connect(masterGain);
+  masterGain.connect(actx.destination);
+
+  // root note -- the fundamental frequency for this pad
+  const osc   = actx.createOscillator();
+  const gOsc  = actx.createGain();
+  osc.type = OSC_TYPES[i];           // waveform varies per pad
+  osc.frequency.value = DRONE_FREQS[i];
+  osc.detune.value = pitchBend;
+  gOsc.gain.value = 1.0;
+  osc.connect(gOsc); gOsc.connect(filter);
+  osc.start();
+
+  // perfect 5th -- ×1.498 above root (thanks AI). fades in smoothly as you press harder.
+  // a 5th is the most consonant interval, makes the sound thicker without clashing
+  const osc5  = actx.createOscillator();
+  const gain5 = actx.createGain();
+  osc5.type = 'sine'; // sine is cleaner -- keeps the harmonic from overpowering the root
+  osc5.frequency.value = DRONE_FREQS[i] * 1.498;
+  osc5.detune.value = pitchBend;
+  gain5.gain.setValueAtTime(0, actx.currentTime);
+  gain5.gain.linearRampToValueAtTime(g5target, actx.currentTime + 0.1);
+  osc5.connect(gain5); gain5.connect(filter);
+  osc5.start();
+
+  // octave -- ×2, only blooms in above 40% pressure. the hardest press unlocks the fullest sound.
+  // triangle wave = mellow, won't make it harsh even when stacked on top
+  const osc8  = actx.createOscillator();
+  const gain8 = actx.createGain();
+  osc8.type = 'triangle';
+  osc8.frequency.value = DRONE_FREQS[i] * 2;
+  osc8.detune.value = pitchBend;
+  gain8.gain.setValueAtTime(0, actx.currentTime);
+  gain8.gain.linearRampToValueAtTime(g8target, actx.currentTime + 0.15);
+  osc8.connect(gain8); gain8.connect(filter);
+  osc8.start();
+
+  droneNodes[i] = { osc, osc5, osc8, gain5, gain8, masterGain, filter, lfo };
+}
+
+function stopDrone(i) {
+  if (!actx || !droneNodes[i]) return;
+  const { osc, osc5, osc8, masterGain, lfo } = droneNodes[i];
+  masterGain.gain.setTargetAtTime(0, actx.currentTime, 0.06); // fade out over ~200ms
+  setTimeout(() => {
+    try { osc.stop(); osc5.stop(); osc8.stop(); lfo.stop(); } catch(e) {}
+  }, 200);
+  delete droneNodes[i];
+}
+
+// mode 1 long-hold: if you keep a pad held past 350ms, a sustained ring fades in
+// turns a rhythm pad into a brief drone -- kind of like holding a key on a synth
+function startSustain(i, strength) {
+  if (!actx || sustainNodes[i]) return;
+  const osc    = actx.createOscillator();
+  const gain   = actx.createGain();
+  const filter = actx.createBiquadFilter();
+  osc.type = 'sawtooth';
+  osc.frequency.value = PERC_FREQS[i] * 2;
+  filter.type = 'bandpass'; // bandpass carves out a specific frequency range -- sounds more "vocal"
+  filter.frequency.value = 400 + i * 180 + strength * 600;
+  filter.Q.value = 10;      // high Q = narrow/resonant band
+  gain.gain.setValueAtTime(0, actx.currentTime);
+  gain.gain.linearRampToValueAtTime(0.05 + strength * 0.07, actx.currentTime + 0.2); // slow fade in
+  osc.connect(filter); filter.connect(gain); gain.connect(actx.destination);
+  osc.start();
+  sustainNodes[i] = { osc, gain, filter };
+}
+
+function stopSustain(i) {
+  if (!actx || !sustainNodes[i]) return;
+  const { osc, gain } = sustainNodes[i];
+  gain.gain.setTargetAtTime(0, actx.currentTime, 0.08); // quick fade out
+  setTimeout(() => { try { osc.stop(); } catch(e){} }, 300);
+  delete sustainNodes[i];
+}
+
+// fired when you hit 2+ pads at once -- a burst of filtered noise as a "clash" accent
+// generated in real-time using a random noise buffer, not a sample
+function noiseBurst(strength) {
+  if (!actx) return;
+  const bufSize = Math.floor(actx.sampleRate * 0.12); // 120ms of noise
+  const buf  = actx.createBuffer(1, bufSize, actx.sampleRate);
+  const data = buf.getChannelData(0);
+  // exponential decay envelope baked into the samples (attack + fast decay)
+  for (let j = 0; j < bufSize; j++) data[j] = (Math.random()*2-1) * Math.exp(-j/bufSize*10);
+  const src    = actx.createBufferSource();
+  const gain   = actx.createGain();
+  const filter = actx.createBiquadFilter();
+  src.buffer = buf;
+  filter.type = 'bandpass';
+  filter.frequency.value = 1800 + strength * 3000; // harder hit = higher pitched noise
+  filter.Q.value = 1.5;
+  gain.gain.value = 0.12 + strength * 0.18;
+  src.connect(filter); filter.connect(gain); gain.connect(actx.destination);
+  src.start();
+}
+
+// mode 1 single hit -- distorted square wave with a fast pitch drop (like a drum)
+// the distortion curve is the soft-clip formula: (pi + k)x / (pi + k|x|) (thankyou AI)
+const PERC_FREQS = [110, 220, 80, 330, 55]; // each pad has a different base pitch
+function percHit(i, strength) {
+  if (!actx) return;
+  const osc  = actx.createOscillator();
+  const gain = actx.createGain();
+  const dist = actx.createWaveShaper();
+
+  // build distortion curve -- k controls how hard the clipping is
+  const n = 512;
+  const curve = new Float32Array(n);
+  const k = 80 + strength * 150; // harder press = more distortion
+  for (let j = 0; j < n; j++) {
+    const x = (j*2)/n - 1;
+    curve[j] = (Math.PI + k) * x / (Math.PI + k * Math.abs(x));
+  }
+  dist.curve = curve;
+
+  const baseFreq = PERC_FREQS[i] * (1 + strength * 0.5); // harder press = higher pitch
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(baseFreq * 4, actx.currentTime);           // starts high
+  osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.4, actx.currentTime + 0.14); // drops fast
+
+  gain.gain.setValueAtTime(0.2 + strength * 0.2, actx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.3); // sharp decay
+
+  osc.connect(dist);
+  dist.connect(gain);
+  gain.connect(actx.destination);
+  osc.start();
+  osc.stop(actx.currentTime + 0.32); // auto-cleanup after 320ms
+}
+
+// ====================
+//  PAD EVENT HANDLING
+// ====================
+// the ESP32 fires touch interrupts as events, not a continuous stream
+// so we use a 180ms timeout: if no new message arrives, we consider the pad released
+const PAD_TIMEOUT_MS = 180;
+const padTimers = [null,null,null,null,null];
+
+function onPadTouch(i, raw) {
+  const norm = normalize(raw); // convert raw ESP32 value -> clean 0–1
+  S.padVal[i]  = raw;
+  S.padNorm[i] = norm;
+
+  const wasActive = S.padActive[i];  // was this pad already being held?
+  S.padActive[i] = true;
+
+  if (!wasActive) padHoldStart[i] = Date.now(); // start tracking hold duration
+  const holdMs      = Date.now() - padHoldStart[i];
+  const activeCount = S.padActive.filter(Boolean).length; // how many pads are currently held
+
+  // route to audio based on mode
+  if (S.mode === 0) {
+    // drone mode: keep the oscillator updated with latest pressure + hold time
+    startDrone(i, norm, holdMs, activeCount);
+  } else {
+    if (!wasActive) {
+      // first touch: fire a hit + visual ripple
+      percHit(i, norm);
+      spawnRipple(i, norm);
+      if (activeCount >= 2) noiseBurst(norm); // bonus noise clash if 2+ pads at once
+    } else if (holdMs > 350 && !sustainNodes[i]) {
+      startSustain(i, norm); // held long enough -- fade in the sustained ring
+    } else if (sustainNodes[i]) {
+      // already sustaining -- update it with current pressure
+      sustainNodes[i].gain.gain.setTargetAtTime(0.05 + norm * 0.07, actx.currentTime, 0.05);
+      sustainNodes[i].filter.frequency.setTargetAtTime(400 + i * 180 + norm * 600, actx.currentTime, 0.1);
+    }
+  }
+
+  // update the pad UI strip at the bottom
+  updatePadUI(i, true, raw, norm);
+  document.getElementById('s-last').textContent = `LAST: pad${i} val=${raw}`;
+
+  // reset the timeout -- each new message kicks the can down the road 180ms
+  // when messages stop coming (finger lifted), the timeout finally fires
+  clearTimeout(padTimers[i]);
+  padTimers[i] = setTimeout(() => {
+    S.padActive[i] = false;
+    S.padNorm[i]   = 0;
+    padHoldStart[i] = 0;
+    updatePadUI(i, false, 0, 0);
+    if (S.mode === 0) stopDrone(i);
+    else stopSustain(i);
+  }, PAD_TIMEOUT_MS);
+}
+
+function updatePadUI(i, active, raw, norm) {
+  const el  = document.getElementById(`pad${i}`);
+  const bar = el.querySelector('.pad-bar');
+  const val = document.getElementById(`pv${i}`);
+
+  el.classList.remove('active-m0','active-m1');
+  if (active) el.classList.add(`active-m${S.mode}`);
+
+  const barH = active ? Math.round(norm * 100) : 0;
+  el.style.setProperty('--bar-h', barH + '%');
+  bar.style.height = barH + '%';
+
+  val.textContent = active ? `${raw}` : '';
+}
+
+function switchMode(newMode) {
+  if (newMode === S.mode) return;
+  S.mode = newMode;
+  S.modeFlash = 1.0;
+
+  // kill all drones and sustains
+  for (let i = 0; i < 5; i++) { stopDrone(i); stopSustain(i); }
+
+  // reset pad states
+  for (let i = 0; i < 5; i++) {
+    S.padActive[i] = false;
+    S.padNorm[i]   = 0;
+    padHoldStart[i] = 0;
+    updatePadUI(i, false, 0, 0);
+  }
+
+  const badge = document.getElementById('mode-badge');
+  badge.className = `m${newMode}`;
+  badge.textContent = ['MODE 0 · DRONE','MODE 1 · RHYTHM'][newMode];
+  document.getElementById('s-mode').textContent = `MODE: ${newMode}`;
+
+  if (newMode === 0) initStreams();
+}
+
+// =========================================================
+//  WEBSERIAL
+//  reads lines from the ESP32 over USB serial
+//  protocol (defined in main.cpp):
+//    "padIndex,value\n"  →  pad touch  (e.g. "2,8\n")
+//    "mode,N\n"          →  mode switch (e.g. "mode,1\n")
+//    anything else       →  ignored
+// =========================================================
+
+// WebSerial only works in Chrome/Edge -- show an error overlay if not supported
+if (!('serial' in navigator)) {
+  document.getElementById('no-serial').classList.add('show');
+}
+
+let port = null, reader = null, connected = false;
+const btn = document.getElementById('connect-btn');
+
+btn.addEventListener('click', async () => {
+  initAudio(); // kick the audio context (browser requires a user gesture first)
+  if (connected) { await doDisconnect(); return; }
+  try {
+    // opens the browser's port picker -- user selects the ESP32's COM port
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 }); // must match Serial.begin(115200) in firmware
+    connected = true;
+    btn.textContent = '[ DISCONNECT ]';
+    btn.classList.add('on');
+    setSerialStatus(true);
+    readLoop(); // start listening
+  } catch(e) { console.error('Connect failed:', e); }
+});
+
+async function doDisconnect() {
+  if (reader) { try { await reader.cancel(); } catch(e){} reader = null; }
+  if (port)   { try { await port.close();    } catch(e){} port   = null; }
+  connected = false;
+  btn.textContent = '[ CONNECT DEVICE ]';
+  btn.classList.remove('on');
+  setSerialStatus(false);
+}
+
+// continuously reads bytes from the serial port, buffers them into lines,
+// and passes each complete line to parseLine
+let lineBuf = '';
+async function readLoop() {
+  const decoder = new TextDecoderStream(); // converts raw bytes -> text
+  port.readable.pipeTo(decoder.writable);
+  reader = decoder.readable.getReader();
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      lineBuf += value;
+      let nl;
+      // chew through any complete lines in the buffer
+      while ((nl = lineBuf.indexOf('\n')) !== -1) {
+        parseLine(lineBuf.slice(0, nl).trim());
+        lineBuf = lineBuf.slice(nl + 1);
+      }
+    }
+  } catch(e) { if (connected) console.error('Read error:', e); }
+  doDisconnect(); // clean up if the loop exits for any reason
+}
+
+function parseLine(line) {
+  if (!line) return;
+
+  // "mode,1" -> switch to mode 1
+  if (line.startsWith('mode,')) {
+    const newMode = parseInt(line.split(',')[1]);
+    if (!isNaN(newMode)) switchMode(newMode);
+    return;
+  }
+
+  // skip the boot greeting printed by setup()
+  if (line.startsWith('NEURO')) return;
+
+  // "2,14" -> pad 2 was touched with raw value 14
+  const parts = line.split(',');
+  if (parts.length === 2) {
+    const i   = parseInt(parts[0]);
+    const raw = parseInt(parts[1]);
+    if (!isNaN(i) && !isNaN(raw) && i >= 0 && i < 5) {
+      onPadTouch(i, raw);
+    }
+  }
+}
+
+function setSerialStatus(ok) {
+  document.getElementById('s-serial').innerHTML = ok
+    ? 'SERIAL: <span class="ok">CONNECTED</span>'
+    : 'SERIAL: <span class="warn">DISCONNECTED</span>';
+}
+function setAudioStatus(msg, cls) {
+  document.getElementById('s-audio').innerHTML = `AUDIO: <span class="${cls}">${msg}</span>`;
+}
+
+// ======================
+//  KEYBOARD FALLBACK
+// ======================
+const KM = {a:0, s:1, d:2, f:3, g:4};
+document.addEventListener('keydown', e => {
+  if (e.repeat) return;
+  const k = e.key.toLowerCase();
+  initAudio();
+  if (k === 'm') { switchMode(1 - S.mode); return; }
+  if (k in KM) onPadTouch(KM[k], 8); // simulate a mid-strength touch (val=8)
+});
+</script>
+</body>
+</html>
